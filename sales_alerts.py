@@ -4,7 +4,7 @@ Sales Alerts: daily Shopify sales check that posts to Slack.
 What it does:
   1. Logs in to Shopify with your app's Client ID + Client Secret
      (client credentials grant, gets a fresh token each run).
-  2. Pulls orders from the last 8 days.
+  2. Pulls orders processed in the last 8 days.
   3. Compares the last 24 hours to the average day of the 7 days before.
   4. Posts a summary to Slack, flagging a sales drop, a sales spike,
      or a high refund rate.
@@ -95,11 +95,11 @@ def get_access_token(cfg):
 
 ORDERS_QUERY = """
 query Orders($cursor: String, $q: String) {
-  orders(first: 100, after: $cursor, query: $q, sortKey: CREATED_AT) {
+  orders(first: 100, after: $cursor, query: $q, sortKey: PROCESSED_AT) {
     pageInfo { hasNextPage endCursor }
     nodes {
       name
-      createdAt
+      processedAt
       totalPriceSet { shopMoney { amount currencyCode } }
       totalRefundedSet { shopMoney { amount } }
     }
@@ -115,7 +115,7 @@ def fetch_orders(cfg, token, since):
     while True:
         result = post_json(
             url,
-            {"query": ORDERS_QUERY, "variables": {"cursor": cursor, "q": f"created_at:>={since.isoformat()}"}},
+            {"query": ORDERS_QUERY, "variables": {"cursor": cursor, "q": f"processed_at:>={since.isoformat()}"}},
             headers,
         )
         if result.get("errors"):
@@ -134,7 +134,9 @@ def analyze(orders, now):
     recent = {"sales": 0.0, "orders": 0, "refunded": 0.0}
     baseline_sales = 0.0
     for o in orders:
-        created = datetime.fromisoformat(o["createdAt"].replace("Z", "+00:00"))
+        # processedAt = when the sale happened (same date Shopify's own reports use).
+        # Imported or backdated orders have an older processedAt than createdAt.
+        created = datetime.fromisoformat(o["processedAt"].replace("Z", "+00:00"))
         amount = float(o["totalPriceSet"]["shopMoney"]["amount"])
         currency = o["totalPriceSet"]["shopMoney"]["currencyCode"]
         refunded = float(o["totalRefundedSet"]["shopMoney"]["amount"])
